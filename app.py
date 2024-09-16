@@ -9,6 +9,7 @@ import os
 import json
 import uuid
 from bson import ObjectId
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -132,47 +133,88 @@ def create_entry():
 
 
 @app.route("/api/search", methods=["POST"])
-def search_by_image():
-    if "image" not in request.files:
-        return jsonify({"error": "No image provided"}), 400
+def search():
+    matches = []
 
-    query_image = request.files["image"]
-    filename = secure_filename(query_image.filename)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    query_image.save(filepath)
+    if "image" in request.files:
+        query_image = request.files["image"]
+        filename = secure_filename(query_image.filename)
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        query_image.save(filepath)
 
-    # Extract face encoding from the query image
-    query_encoding = extract_face_encodings(filepath)
-    if query_encoding is None:
-        return jsonify({"error": "No face found in the image"}), 400
+        # Extract face encoding from the query image
+        query_encoding = extract_face_encodings(filepath)
+        if query_encoding is None:
+            return jsonify({"error": "No face found in the image"}), 400
 
-    # Find similar faces in the database
-    entries = list(entries_collection.find())
-    similarities = []
+        # Find similar faces in the database
+        matches = list(entries_collection.find())
+        similarities = []
 
-    for entry in entries:
-        if "face_encoding" in entry:
-            entry_encoding = np.array(entry["face_encoding"])
-            distance = np.linalg.norm(query_encoding - entry_encoding)
-            similarities.append((distance, entry))
+        for entry in matches:
+            if "face_encoding" in entry:
+                entry_encoding = np.array(entry["face_encoding"])
+                distance = np.linalg.norm(query_encoding - entry_encoding)
+                similarities.append((distance, entry))
 
-    # Sort by distance (lower is better)
-    similarities.sort(key=lambda x: x[0])
+        # Sort by distance (lower is better)
+        similarities.sort(key=lambda x: x[0])
 
-    # Return top 5 similar faces
-    top_matches = [entry for _, entry in similarities[:3]]
+        # Return top 5 similar faces
+        matches = [entry for _, entry in similarities[:3]]
 
-    # Remove fields "face_encoding"
-    for match in top_matches:
-        match.pop("face_encoding", None)
+    if "date_start" in request.form and "date_end" in request.form:
 
-    # Convert ObjectId to string
-    for match in top_matches:
-        for key, value in match.items():
+        date_start = request.form.get("date_start")
+        date_end = request.form.get("date_end")
+        incident_type = request.form.get("incident_type")
+
+        matches = list(
+            entries_collection.find(
+                {
+                    "date": {"$gte": date_start, "$lte": date_end},
+                    "incident_types": incident_type,
+                }
+            )
+        )
+
+    if "case_id" in request.form:
+        case_id = request.form.get("case_id")
+        # Search like %case_id%
+        matches = list(entries_collection.find({"case_id": {"$regex": case_id}}))
+
+    if "search_text" in request.form:
+        search_text = request.form.get("search_text")
+        # Search like %search_text%
+        matches = list(
+            entries_collection.find(
+                {
+                    "$or": [
+                        {"organization": {"$regex": search_text, "$options": "i"}},
+                        {"sub_organization": {"$regex": search_text, "$options": "i"}},
+                        {"name": {"$regex": search_text, "$options": "i"}},
+                        {"brief_description": {"$regex": search_text, "$options": "i"}},
+                        {"area": {"$regex": search_text, "$options": "i"}},
+                        {"cas": {"$regex": search_text, "$options": "i"}},
+                        {"martyped": {"$regex": search_text, "$options": "i"}},
+                        {"injured": {"$regex": search_text, "$options": "i"}},
+                        {"killed": {"$regex": search_text, "$options": "i"}},
+                        {"case_id": {"$regex": search_text, "$options": "i"}},
+                    ]
+                }
+            )
+        )
+
+    for entry in matches:
+        entry.pop("face_encoding", None)
+
+    # Convert ObjectId to string in entries
+    for entry in matches:
+        for key, value in entry.items():
             if isinstance(value, ObjectId):
-                match[key] = str(value)
+                entry[key] = str(value)
 
-    return jsonify(top_matches), 200
+    return jsonify(matches), 200
 
 
 @app.route("/images/<filename>")
