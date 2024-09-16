@@ -205,6 +205,10 @@ def search():
             )
         )
 
+    if "incident_type" in request.form:
+        incident_type = request.form.get("incident_type")
+        matches = list(entries_collection.find({"incident_types": incident_type}))
+
     for entry in matches:
         entry.pop("face_encoding", None)
 
