@@ -24,6 +24,13 @@ client = MongoClient(mongodb_uri)
 db = client["user_database"]
 users_collection = db["users"]
 entries_collection = db["entries"]
+lows_collection = db["low"]
+
+
+# i
+@app.route("/", methods=["GET"])
+def showMain():
+    return "Welcome to the API"
 
 
 @app.route("/api/signup", methods=["POST"])
@@ -81,6 +88,7 @@ def extract_face_encodings(img_path):
 
 @app.route("/api/entry", methods=["POST"])
 def create_entry():
+
     # Parse form fields
     data = {
         "date": request.form.get("date"),
@@ -127,7 +135,126 @@ def create_entry():
             data["face_encoding"] = face_encoding.tolist()
 
     # Insert the entry into the database
-    entries_collection.insert_one(data)
+    newNetry = entries_collection.insert_one(data)
+    print("Created new entry:", newNetry.inserted_id)
+
+    # Retrieve the newly inserted document
+    created_entry = entries_collection.find_one({"_id": newNetry.inserted_id})
+
+    # Convert ObjectId to string in the created entry
+    if created_entry:
+        created_entry["_id"] = str(created_entry["_id"])
+
+    # Send newNetry
+    return (
+        jsonify(created_entry),
+        200,
+    )
+
+
+# fetch low data by name
+@app.route("/api/low/<entry_id>", methods=["GET"])
+def get_low(entry_id):
+    if not entry_id:
+        return jsonify({"error": "Entry Id is required"}), 400
+
+    low = lows_collection.find_one({"entry_id": entry_id})
+    if not low:
+        return jsonify({"error": "Low not found"}), 404
+
+    # Convert ObjectId to string
+    low["_id"] = str(low["_id"])
+
+    return jsonify(low), 200
+
+
+@app.route("/api/low", methods=["POST"])
+def create_low():
+
+    # Check if entry_id is provided
+    if not request.form.get("entry_id"):
+        return jsonify({"error": "entry_id is required"}), 400
+
+    # Parse form fields
+    data = {
+        "entry_id": request.form.get("entry_id"),
+        "name": request.form.get("name"),
+        "alias": request.form.get("alias"),
+        "father_name": request.form.get("father_name"),
+        "mother_name": request.form.get("mother_name"),
+        "religion": request.form.get("religion"),
+        "sect_sub_sect": request.form.get("sect_sub_sect"),
+        "caste": request.form.get("caste"),
+        "sub_caste": request.form.get("sub_caste"),
+        "nationality": request.form.get("nationality"),
+        "cnic": request.form.get("cnic"),
+        "dob": request.form.get("dob"),
+        "age": request.form.get("age"),
+        "civ_edn": request.form.get("civ_edn"),
+        "complexion": request.form.get("complexion"),
+        "contact_nos": request.form.get("contact_nos"),
+        "facebook": request.form.get("facebook"),
+        "twitter": request.form.get("twitter"),
+        "tiktok": request.form.get("tiktok"),
+        "email": request.form.get("email"),
+        "passport_no": request.form.get("passport_no"),
+        "bank_acct_details": request.form.get("bank_acct_details"),
+        "languages": request.form.get("languages"),
+        "temp_address": request.form.get("temp_address"),
+        "perm_address": request.form.get("perm_address"),
+        "detail_of_visit_foregin_countries": request.form.get(
+            "detail_of_visit_foregin_countries"
+        ),
+        "areas_of_influence": request.form.get("areas_of_influence"),
+        "active_since": request.form.get("active_since"),
+        "likely_loc": request.form.get("likely_loc"),
+        "tier": request.form.get("tier"),
+        "affl_with_ts_gp": request.form.get("affl_with_ts_gp"),
+        "political_affl": request.form.get("political_affl"),
+        "religious_affl": request.form.get("religious_affl"),
+        "occupation": request.form.get("occupation"),
+        "source_of_income": request.form.get("source_of_income"),
+        "property_details": request.form.get("property_details"),
+        "marital_status": request.form.get("marital_status"),
+        "detail_of_children": request.form.get("detail_of_children"),
+        "brothers": request.form.get("brothers"),
+        "sisters": request.form.get("sisters"),
+        "uncles": request.form.get("uncles"),
+        "aunts": request.form.get("aunts"),
+        "cousins": request.form.get("cousins"),
+        "father_in_law": request.form.get("father_in_law"),
+        "mother_in_law": request.form.get("mother_in_law"),
+        "brother_in_law": request.form.get("brother_in_law"),
+        "sister_in_law": request.form.get("sister_in_law"),
+        "criminal_activities": request.form.get("criminal_activities"),
+        "extortion_activities": request.form.get("extortion_activities"),
+        "attitude_towards_govt": request.form.get("attitude_towards_govt"),
+        "attitude_towards_state": request.form.get("attitude_towards_state"),
+        "attitude_towards_sfs": request.form.get("attitude_towards_sfs"),
+        "gen_habbits": request.form.get("gen_habbits"),
+        "reputation_among_locals": request.form.get("reputation_among_locals"),
+        "fir_status": request.form.get("fir_status"),
+        "gen_remarks": request.form.get("gen_remarks"),
+    }
+
+    # Handle file upload
+    if "thumbnail" in request.files:
+        thumbnail = request.files["thumbnail"]
+        original_filename = secure_filename(thumbnail.filename)
+        file_extension = os.path.splitext(original_filename)[1]
+        random_filename = f"{uuid.uuid4()}{file_extension}"
+        filepath = os.path.join(UPLOAD_FOLDER, random_filename)
+        thumbnail.save(filepath)
+
+        data["thumbnail"] = random_filename
+
+        # Extract and store face encoding
+        face_encoding = extract_face_encodings(filepath)
+        if face_encoding is not None:
+            data["face_encoding"] = face_encoding.tolist()
+
+    # Insert the entry into the database
+    lows_collection.insert_one(data)
 
     return jsonify({"message": "Entry created successfully"}), 200
 
@@ -227,4 +354,4 @@ def serve_image(filename):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", debug=True)
