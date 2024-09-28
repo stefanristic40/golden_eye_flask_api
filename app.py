@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, send_from_directory
+from io import BytesIO
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from pymongo import MongoClient
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -10,6 +11,8 @@ import json
 import uuid
 from bson import ObjectId
 import re
+import pythoncom
+from docx2pdf import convert
 
 # Load environment variables from .env file
 load_dotenv()
@@ -86,6 +89,22 @@ def extract_face_encodings(img_path):
     return None
 
 
+# fetch entry by entry id
+@app.route("/api/entry/<entry_id>", methods=["GET"])
+def get_entry(entry_id):
+    if not entry_id:
+        return jsonify({"error": "Entry Id is required"}), 400
+
+    entry = entries_collection.find_one({"_id": ObjectId(entry_id)})
+    if not entry:
+        return jsonify({"error": "Entry not found"}), 404
+
+    # Convert ObjectId to string
+    entry["_id"] = str(entry["_id"])
+
+    return jsonify(entry), 200
+
+
 @app.route("/api/entry", methods=["POST"])
 def create_entry():
 
@@ -134,6 +153,17 @@ def create_entry():
         if face_encoding is not None:
             data["face_encoding"] = face_encoding.tolist()
 
+    # Handle GOE file upload "uploads/goe"
+    if "goe" in request.files:
+        goe = request.files["goe"]
+        goe_filename = secure_filename(goe.filename)
+        goe_extension = os.path.splitext(goe_filename)[1]
+        random_filename = f"{uuid.uuid4()}{goe_extension}"
+        filepath = os.path.join(UPLOAD_FOLDER + "/goes", random_filename)
+        goe.save(filepath)
+
+        data["goe"] = random_filename
+
     # Insert the entry into the database
     newNetry = entries_collection.insert_one(data)
     print("Created new entry:", newNetry.inserted_id)
@@ -152,7 +182,7 @@ def create_entry():
     )
 
 
-# fetch low data by name
+# fetch low data by entry id
 @app.route("/api/low/<entry_id>", methods=["GET"])
 def get_low(entry_id):
     if not entry_id:
@@ -161,6 +191,11 @@ def get_low(entry_id):
     low = lows_collection.find_one({"entry_id": entry_id})
     if not low:
         return jsonify({"error": "Low not found"}), 404
+
+    # Fetch thumbnail from the entry and attach it into response
+    entry = entries_collection.find_one({"_id": ObjectId(entry_id)})
+    if entry and "thumbnail" in entry:
+        low["thumbnail"] = entry["thumbnail"]
 
     # Convert ObjectId to string
     low["_id"] = str(low["_id"])
@@ -236,22 +271,6 @@ def create_low():
         "fir_status": request.form.get("fir_status"),
         "gen_remarks": request.form.get("gen_remarks"),
     }
-
-    # Handle file upload
-    if "thumbnail" in request.files:
-        thumbnail = request.files["thumbnail"]
-        original_filename = secure_filename(thumbnail.filename)
-        file_extension = os.path.splitext(original_filename)[1]
-        random_filename = f"{uuid.uuid4()}{file_extension}"
-        filepath = os.path.join(UPLOAD_FOLDER, random_filename)
-        thumbnail.save(filepath)
-
-        data["thumbnail"] = random_filename
-
-        # Extract and store face encoding
-        face_encoding = extract_face_encodings(filepath)
-        if face_encoding is not None:
-            data["face_encoding"] = face_encoding.tolist()
 
     # Insert the entry into the database
     lows_collection.insert_one(data)
@@ -348,9 +367,61 @@ def search():
     return jsonify(matches), 200
 
 
+@app.route("/api/convert/docx-to-pdf", methods=["POST"])
+def convert_docx_to_pdf():
+    # Check if the request contains a file part
+    if "docx" not in request.files:
+        return jsonify({"error": "No DOCX file provided"}), 400
+
+    # Retrieve the file from the request
+    docx_file = request.files["docx"]
+    if docx_file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    # Secure the filename and save the file
+    docx_filename = secure_filename(docx_file.filename)
+    docx_path = os.path.join(UPLOAD_FOLDER, docx_filename)
+    docx_file.save(docx_path)
+
+    # Generate a unique filename for the PDF file
+    pdf_filename = f"{uuid.uuid4()}.pdf"
+    pdf_path = os.path.join(UPLOAD_FOLDER, pdf_filename)
+
+    try:
+        pythoncom.CoInitialize()
+        # Convert DOCX to PDF
+        convert(docx_path, pdf_path)
+    except Exception as e:
+        return jsonify({"error": f"Failed to convert DOCX to PDF: {str(e)}"}), 500
+    finally:
+        # Uninitialize COM library
+        pythoncom.CoUninitialize()
+
+    # Read the PDF file into a binary stream
+    with open(pdf_path, "rb") as pdf_file:
+        pdf_data = pdf_file.read()
+
+    # Clean up the temporary files
+    os.remove(docx_path)
+    os.remove(pdf_path)
+
+    # Return the PDF file as a response
+    return send_file(
+        BytesIO(pdf_data),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name="converted.pdf",
+    )
+
+
 @app.route("/images/<filename>")
 def serve_image(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+@app.route("/goes/<filename>", methods=["GET"])
+def serve_goe(filename):
+    return send_from_directory(UPLOAD_FOLDER + "/goes", filename)
 
 
 if __name__ == "__main__":
