@@ -1,3 +1,4 @@
+import datetime
 from io import BytesIO
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from pymongo import MongoClient
@@ -28,6 +29,7 @@ db = client["user_database"]
 users_collection = db["users"]
 entries_collection = db["entries"]
 lows_collection = db["low"]
+save_collection = db["save"]
 
 
 # i
@@ -276,6 +278,23 @@ def create_low():
     lows_collection.insert_one(data)
 
     return jsonify({"message": "Entry created successfully"}), 200
+
+
+@app.route("/api/save", methods=["POST"])
+def save():
+    content = request.form.get("content")
+    # Save IP address to
+    ip = request.remote_addr
+    # Curren ttime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if not content:
+        return jsonify({"error": "Content is required"}), 400
+
+    # Insert the content into the database
+    save_collection.insert_one({"content": content, "ip": ip, "time": current_time})
+
+    return jsonify({"message": "Content saved successfully"}), 200
 
 
 @app.route("/api/search", methods=["POST"])
